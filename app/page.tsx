@@ -1,101 +1,308 @@
+'use client';
+
+import { createAccount } from "@turnkey/viem";
+import { useTurnkey } from "@turnkey/sdk-react";
 import Image from "next/image";
+import { useForm } from "react-hook-form";
+import axios from "axios";
+import { useState, useEffect } from "react";
+import { createWalletClient, http } from "viem";
+import { sepolia } from "viem/chains";
+import styles from "./index.module.css";
+import { TWalletDetails } from "../types";
+
+type subOrgFormData = {
+  subOrgName: string;
+};
+
+type signingFormData = {
+  messageToSign: string;
+};
+
+type TWalletState = TWalletDetails | null;
+
+type TSignedMessage = {
+  message: string;
+  signature: string;
+} | null;
+
+const humanReadableDateTime = (): string => {
+  return new Date().toLocaleString().replaceAll("/", "-").replaceAll(":", ".");
+};
 
 export default function Home() {
+  const { turnkey, passkeyClient } = useTurnkey();
+
+  // Wallet is used as a proxy for logged-in state
+  const [wallet, setWallet] = useState<TWalletState>(null);
+  const [signedMessage, setSignedMessage] = useState<TSignedMessage>(null);
+
+  const { handleSubmit: subOrgFormSubmit } = useForm<subOrgFormData>();
+  const { register: signingFormRegister, handleSubmit: signingFormSubmit } =
+    useForm<signingFormData>();
+  const { register: _loginFormRegister, handleSubmit: loginFormSubmit } =
+    useForm();
+
+  // First, logout user if there is no current wallet set
+  useEffect(() => {
+    (async () => {
+      if (!wallet) {
+        await turnkey?.logoutUser();
+      }
+    })();
+  });
+
+  const signMessage = async (data: signingFormData) => {
+    if (!wallet) {
+      throw new Error("wallet not found");
+    }
+
+    const viemAccount = await createAccount({
+      client: passkeyClient!,
+      organizationId: wallet.subOrgId,
+      signWith: wallet.address,
+      ethereumAddress: wallet.address,
+    });
+
+    const viemClient = createWalletClient({
+      account: viemAccount,
+      chain: sepolia,
+      transport: http(),
+    });
+
+    const signedMessage = await viemClient.signMessage({
+      message: data.messageToSign,
+    });
+
+    setSignedMessage({
+      message: data.messageToSign,
+      signature: signedMessage,
+    });
+  };
+
+  const createSubOrgAndWallet = async () => {
+    const subOrgName = `Turnkey Viem+Passkey Demo - ${humanReadableDateTime()}`;
+    const credential = await passkeyClient?.createUserPasskey({
+      publicKey: {
+        rp: {
+          id: "localhost",
+          name: "Turnkey Viem Passkey Demo",
+        },
+        user: {
+          name: subOrgName,
+          displayName: subOrgName,
+        },
+      },
+    });
+
+    if (!credential?.encodedChallenge || !credential?.attestation) {
+      return false;
+    }
+
+    const res = await axios.post("/api/createSubOrgs", {
+      subOrgName: subOrgName,
+      challenge: credential?.encodedChallenge,
+      attestation: credential?.attestation,
+    });
+
+    const response = res.data as TWalletDetails;
+    setWallet(response);
+  };
+
+  const login = async () => {
+    try {
+      // Initiate login (read-only passkey session)
+      const loginResponse = await passkeyClient?.login();
+      if (!loginResponse?.organizationId) {
+        return;
+      }
+
+      const currentUserSession = await turnkey?.currentUserSession();
+      if (!currentUserSession) {
+        return;
+      }
+
+      const walletsResponse = await currentUserSession?.getWallets();
+      if (!walletsResponse?.wallets[0].walletId) {
+        return;
+      }
+
+      const walletId = walletsResponse?.wallets[0].walletId;
+      const walletAccountsResponse =
+        await currentUserSession?.getWalletAccounts({
+          organizationId: loginResponse?.organizationId,
+          walletId,
+        });
+      if (!walletAccountsResponse?.accounts[0].address) {
+        return;
+      }
+
+      setWallet({
+        id: walletId,
+        address: walletAccountsResponse?.accounts[0].address,
+        subOrgId: loginResponse.organizationId,
+      } as TWalletDetails);
+    } catch (e: any) {
+      const message = `caught error: ${e.toString()}`;
+      console.error(message);
+      alert(message);
+    }
+  };
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
+    <main className={styles.main}>
+      <a
+        href="https://turnkey.com"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
         <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
+          src="/logo.svg"
+          alt="Turnkey Logo"
+          className={styles.turnkeyLogo}
+          width={100}
+          height={24}
           priority
         />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
-
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+      </a>
+      <div>
+        {wallet !== null && (
+          <div className={styles.info}>
+            Your sub-org ID: <br />
+            <span className={styles.code}>{wallet.subOrgId}</span>
+          </div>
+        )}
+        {wallet && (
+          <div className={styles.info}>
+            ETH address: <br />
+            <span className={styles.code}>{wallet.address}</span>
+          </div>
+        )}
+        {signedMessage && (
+          <div className={styles.info}>
+            Message: <br />
+            <span className={styles.code}>{signedMessage.message}</span>
+            <br />
+            <br />
+            Signature: <br />
+            <span className={styles.code}>{signedMessage.signature}</span>
+            <br />
+            <br />
+            <a
+              href="https://etherscan.io/verifiedSignatures"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Verify with Etherscan
+            </a>
+          </div>
+        )}
+      </div>
+      {!wallet && (
+        <div>
+          <h2>Create a new wallet</h2>
+          <p className={styles.explainer}>
+            We&apos;ll prompt your browser to create a new passkey. The details
+            (credential ID, authenticator data, client data, attestation) will
+            be used to create a new{" "}
+            <a
+              href="https://docs.turnkey.com/getting-started/sub-organizations"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Turnkey Sub-Organization
+            </a>{" "}
+            and a new{" "}
+            <a
+              href="https://docs.turnkey.com/getting-started/wallets"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Wallet
+            </a>{" "}
+            within it.
+            <br />
+            <br />
+            This request to Turnkey will be created and signed by the backend
+            API key pair.
+          </p>
+          <form
+            className={styles.form}
+            onSubmit={subOrgFormSubmit(createSubOrgAndWallet)}
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
+            <input
+              className={styles.button}
+              type="submit"
+              value="Create new wallet"
             />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+          </form>
+          <br />
+          <br />
+          <h2>Already created your wallet? Log back in</h2>
+          <p className={styles.explainer}>
+            Based on the parent organization ID and a stamp from your passkey
+            used to created the sub-organization and wallet, we can look up your
+            sub-organization using the{" "}
+            <a
+              href="https://docs.turnkey.com/api#tag/Who-am-I"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Whoami endpoint.
+            </a>
+          </p>
+          <form
+            className={styles.form}
+            onSubmit={loginFormSubmit(login)}
           >
-            Read our docs
-          </a>
+            <input
+              className={styles.button}
+              type="submit"
+              value="Login to sub-org with existing passkey"
+            />
+          </form>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+      )}
+      {wallet !== null && (
+        <div>
+          <h2>Now let&apos;s sign something!</h2>
+          <p className={styles.explainer}>
+            We&apos;ll use a{" "}
+            <a
+              href="https://viem.sh/docs/accounts/custom.html"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Viem custom account
+            </a>{" "}
+            to do this, using{" "}
+            <a
+              href="https://www.npmjs.com/package/@turnkey/viem"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              @turnkey/viem
+            </a>
+            . You can kill your NextJS server if you want, everything happens on
+            the client-side!
+          </p>
+          <form
+            className={styles.form}
+            onSubmit={signingFormSubmit(signMessage)}
+          >
+            <input
+              className={styles.input}
+              {...signingFormRegister("messageToSign")}
+              placeholder="Write something to sign..."
+            />
+            <input
+              className={styles.button}
+              type="submit"
+              value="Sign Message"
+            />
+          </form>
+        </div>
+      )}
+    </main>
   );
 }

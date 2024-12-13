@@ -23,11 +23,8 @@ type ErrorMessage = {
     message: string;
 };
 
-export async function POST(
-    req: NextApiRequest,
-    res: NextApiResponse<TWalletDetails | ErrorMessage>
-) {
-    const createSubOrgRequest = req.body as CreateSubOrgWithWalletRequest;
+export async function POST(request: Request) {
+    const createSubOrgRequest = (await request.json()) as CreateSubOrgWithWalletRequest;
 
     try {
         const turnkey = new Turnkey({
@@ -70,16 +67,34 @@ export async function POST(
         const walletId = wallet.walletId;
         const walletAddress = wallet.addresses[0];
 
-        res.status(200).json({
+        console.log('result', {
             id: walletId,
             address: walletAddress,
             subOrgId: subOrgId,
         });
+
+
+        return new Response(
+            JSON.stringify({
+                id: walletId,
+                address: walletAddress,
+                subOrgId: subOrgId,
+            }),
+            {
+                headers: { "Content-Type": "application/json" },
+                status: 200,
+            }
+        );
     } catch (e) {
         console.error(e);
-
-        res.status(500).json({
-            message: "Something went wrong.",
-        });
+        return new Response(
+            JSON.stringify({
+                message: "Something went wrong", data: e
+            }),
+            {
+                headers: { "Content-Type": "application/json" },
+                status: 500,
+            }
+        );
     }
 }

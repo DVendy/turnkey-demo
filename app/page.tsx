@@ -65,6 +65,7 @@ const Page = () => {
         <div className="container mx-auto py-10 flex flex-col gap-4 items-center">
             <div className="text-xl font-bold">Turnkey Demo</div>
             <button onClick={()=>{
+                console.log('turnkey', turnkey);
                 console.log('passkeyClient', passkeyClient);
                 console.log('subOrg', subOrg);
                 console.log('user', user);

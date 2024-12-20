@@ -61,6 +61,12 @@ export async function getSubOrgId(
         throw new Error("Invalid parameter")
     }
 
+    console.log({
+        organizationId: turnkeyConfig.organizationId,
+        filterType,
+        filterValue,
+    });
+    
     const { organizationIds } = await client.getSubOrgIds({
         organizationId: turnkeyConfig.organizationId,
         filterType,
